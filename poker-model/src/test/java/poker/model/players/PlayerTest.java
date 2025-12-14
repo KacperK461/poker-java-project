@@ -150,5 +150,7 @@ class PlayerTest {
             () -> new Player(playerId, "", 1000));
         assertThrows(IllegalArgumentException.class, 
             () -> new Player(playerId, "Test", -1));
+        assertThrows(IllegalArgumentException.class, 
+            () -> new Player(playerId, "Test", -1));
     }
 }

@@ -148,4 +148,33 @@ class MessageTest {
         assertEquals("ACTION", msg.getAction());
         assertEquals("value with  spaces", msg.getParams().get("KEY"));
     }
+
+    @Test
+    void testGetParam() {
+        ClientMessage msg = ClientMessage.hello("1.0");
+        String version = msg.getParam("VERSION");
+        assertEquals("1.0", version);
+    }
+
+    @Test
+    void testGetParamWithDefault() {
+        ClientMessage msg = ClientMessage.hello("1.0");
+        String value = msg.getParam("NONEXISTENT", "default");
+        assertEquals("default", value);
+    }
+
+    @Test
+    void testToProtocolStringWithNullIds() {
+        ClientMessage msg = ClientMessage.hello("1.0");
+        String protocol = msg.toProtocolString();
+        assertTrue(protocol.startsWith("- -"));
+    }
+
+    @Test
+    void testToProtocolStringWithEmptyParams() {
+        ClientMessage msg = ClientMessage.quit("GAME123", "PLAYER456");
+        String protocol = msg.toProtocolString();
+        // quit has no parameters
+        assertFalse(protocol.endsWith("="));
+    }
 }
