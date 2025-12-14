@@ -97,7 +97,7 @@ public class PokerGame {
             throw new StateMismatchException("LOBBY", state.name());
         }
         if (players.size() < config.getMinPlayers()) {
-            throw new InvalidMoveException("NOT_ENOUGH_PLAYERS", 
+            throw new InvalidMoveException("NOT_ENOUGH_PLAYERS",
                 "Need at least " + config.getMinPlayers() + " players");
         }
 
@@ -176,6 +176,10 @@ public class PokerGame {
      * Player checks (bet is 0).
      */
     public synchronized void check(PlayerId playerId) {
+        if (state != GameState.BET1 && state != GameState.BET2) {
+            throw new StateMismatchException("BET1 or BET2", state.name());
+        }
+        
         validateTurn(playerId);
         
         Player player = players.get(playerId);
@@ -191,6 +195,10 @@ public class PokerGame {
      * Player calls the current bet.
      */
     public synchronized void call(PlayerId playerId) {
+        if (state != GameState.BET1 && state != GameState.BET2) {
+            throw new StateMismatchException("BET1 or BET2", state.name());
+        }
+        
         validateTurn(playerId);
         
         Player player = players.get(playerId);
@@ -211,6 +219,10 @@ public class PokerGame {
      * Player raises the bet.
      */
     public synchronized void raise(PlayerId playerId, int amount) {
+        if (state != GameState.BET1 && state != GameState.BET2) {
+            throw new StateMismatchException("BET1 or BET2", state.name());
+        }
+        
         validateTurn(playerId);
         
         Player player = players.get(playerId);
@@ -222,7 +234,7 @@ public class PokerGame {
         }
         
         if (amount < config.getFixedBet()) {
-            throw new InvalidMoveException("RAISE_TOO_SMALL", 
+            throw new InvalidMoveException("RAISE_TOO_SMALL",
                 "Minimum raise is " + config.getFixedBet());
         }
         
@@ -233,7 +245,11 @@ public class PokerGame {
         advanceTurn();
     }
 
-    /**
+    /**if (state != GameState.BET1 && state != GameState.BET2) {
+            throw new StateMismatchException("BET1 or BET2", state.name());
+        }
+        
+        
      * Player folds.
      */
     public synchronized void fold(PlayerId playerId) {

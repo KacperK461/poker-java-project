@@ -1,101 +1,178 @@
 package poker.server;
 
 import lombok.extern.slf4j.Slf4j;
+import poker.common.cards.Card;
+import poker.model.exceptions.InvalidMoveException;
+import poker.model.exceptions.ProtocolException;
 import poker.model.game.*;
 import poker.model.players.Player;
 import poker.model.players.PlayerId;
 import poker.model.protocol.Message;
 import poker.model.protocol.ServerMessage;
-import poker.model.exceptions.*;
-import poker.common.cards.Card;
+import poker.server.GameManager;
 
-import java.io.*;
-import java.net.Socket;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.stream.Collectors;
 
 /**
- * Handles a client connection in the poker server.
+ * NIO-based client handler using non-blocking SocketChannel.
  */
 @Slf4j
-public class ClientHandler implements Runnable {
-    private final Socket socket;
+public class ClientHandler {
+    private static final int BUFFER_SIZE = 8192;
+    private static final String LINE_SEPARATOR = "\n";
+
+    private final SocketChannel channel;
     private final GameManager gameManager;
     private final Map<GameId, Set<ClientHandler>> gameClients;
+    private final PokerServer server;
     
-    private BufferedReader reader;
-    private PrintWriter writer;
+    private final ByteBuffer readBuffer;
+    private final StringBuilder messageBuilder;
+    private final Queue<String> writeQueue;
+    
     private PlayerId playerId;
     private GameId currentGameId;
-    private volatile boolean running;
 
-    public ClientHandler(Socket socket, GameManager gameManager, 
-                        Map<GameId, Set<ClientHandler>> gameClients) {
-        this.socket = socket;
+    public ClientHandler(
+            SocketChannel channel,
+            GameManager gameManager,
+            Map<GameId, Set<ClientHandler>> gameClients,
+            PokerServer server) {
+        this.channel = channel;
         this.gameManager = gameManager;
         this.gameClients = gameClients;
-        this.running = true;
+        this.server = server;
+        this.readBuffer = ByteBuffer.allocate(BUFFER_SIZE);
+        this.messageBuilder = new StringBuilder();
+        this.writeQueue = new ConcurrentLinkedQueue<>();
     }
 
-    @Override
-    public void run() {
-        try {
-            reader = new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-            writer = new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
-
-            log.info("Client connected from {}", socket.getRemoteSocketAddress());
-
-            String line;
-            while (running && (line = reader.readLine()) != null) {
-                try {
-                    handleMessage(line.trim());
-                } catch (Exception e) {
-                    log.error("Error handling message: {}", line, e);
-                    sendError(e);
-                }
-            }
-        } catch (IOException e) {
-            log.error("Connection error", e);
-        } finally {
-            cleanup();
-        }
-    }
-
-    private void handleMessage(String line) {
-        if (line.isEmpty()) {
+    public void handleRead(SelectionKey key) throws IOException {
+        int bytesRead = channel.read(readBuffer);
+        
+        if (bytesRead == -1) {
+            // Client disconnected
+            close();
             return;
         }
 
+        if (bytesRead > 0) {
+            readBuffer.flip();
+            byte[] data = new byte[readBuffer.remaining()];
+            readBuffer.get(data);
+            readBuffer.clear();
+
+            String chunk = new String(data, StandardCharsets.UTF_8);
+            messageBuilder.append(chunk);
+
+            // Process complete messages (lines ending with \n)
+            processMessages();
+        }
+    }
+
+    private void processMessages() {
+        String buffered = messageBuilder.toString();
+        int newlineIndex;
+        
+        while ((newlineIndex = buffered.indexOf(LINE_SEPARATOR)) != -1) {
+            String message = buffered.substring(0, newlineIndex).trim();
+            buffered = buffered.substring(newlineIndex + 1);
+            
+            if (!message.isEmpty()) {
+                processMessage(message);
+            }
+        }
+        
+        messageBuilder.setLength(0);
+        messageBuilder.append(buffered);
+    }
+
+    private void processMessage(String line) {
         log.debug("Received: {}", line);
 
-        Message.ParsedMessage parsed = Message.parse(line);
-        String action = parsed.getAction();
+        try {
+            Message.ParsedMessage parsed = Message.parse(line);
+            String action = parsed.getAction();
 
-        switch (action) {
-            case "HELLO" -> handleHello(parsed);
-            case "CREATE" -> handleCreate(parsed);
-            case "JOIN" -> handleJoin(parsed);
-            case "LEAVE" -> handleLeave(parsed);
-            case "START" -> handleStart(parsed);
-            case "CHECK" -> handleCheck(parsed);
-            case "CALL" -> handleCall(parsed);
-            case "BET" -> handleBet(parsed);
-            case "FOLD" -> handleFold(parsed);
-            case "DRAW" -> handleDraw(parsed);
-            case "STATUS" -> handleStatus(parsed);
-            case "QUIT" -> handleQuit(parsed);
-            default -> sendError("UNKNOWN_ACTION", "Unknown action: " + action);
+            switch (action) {
+                case "HELLO" -> handleHello(parsed);
+                case "CREATE" -> handleCreate(parsed);
+                case "JOIN" -> handleJoin(parsed);
+                case "LEAVE" -> handleLeave();
+                case "START" -> handleStart();
+                case "CHECK" -> handleCheck();
+                case "CALL" -> handleCall();
+                case "BET" -> handleBet(parsed);
+                case "FOLD" -> handleFold();
+                case "DRAW" -> handleDraw(parsed);
+                default -> sendError("UNKNOWN_ACTION", "Unknown action: " + action);
+            }
+        } catch (Exception e) {
+            log.error("Error processing message: {}", line, e);
+            sendError("INVALID_FORMAT", "Invalid message format");
         }
+    }
+
+    public void handleWrite(SelectionKey key) throws IOException {
+        while (!writeQueue.isEmpty()) {
+            String message = writeQueue.peek();
+            ByteBuffer buffer = ByteBuffer.wrap(message.getBytes(StandardCharsets.UTF_8));
+            
+            int written = channel.write(buffer);
+            
+            if (buffer.hasRemaining()) {
+                // Couldn't write all data, will try again later
+                return;
+            }
+            
+            // Successfully wrote the message
+            writeQueue.poll();
+        }
+        
+        // No more data to write, remove write interest
+        if (writeQueue.isEmpty()) {
+            key.interestOps(SelectionKey.OP_READ);
+        }
+    }
+
+    public void send(String message) {
+        if (!message.endsWith(LINE_SEPARATOR)) {
+            message += LINE_SEPARATOR;
+        }
+        
+        log.debug("Queuing: {}", message.trim());
+        writeQueue.offer(message);
+        
+        // Register write interest
+        try {
+            for (SelectionKey key : server.getSelector().keys()) {
+                if (key.channel() == channel && key.isValid()) {
+                    key.interestOps(key.interestOps() | SelectionKey.OP_WRITE);
+                    server.getSelector().wakeup();
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error registering write interest", e);
+        }
+    }
+
+    private void sendError(String code, String message) {
+        send(ServerMessage.error(code, message).toProtocolString());
     }
 
     private void handleHello(Message.ParsedMessage msg) {
         String version = msg.getParams().get("VERSION");
         log.info("Client hello, version: {}", version);
-        send(ServerMessage.ok("Welcome to Poker Server"));
+        send(ServerMessage.ok("Welcome to Poker Server").toProtocolString());
     }
 
     private void handleCreate(Message.ParsedMessage msg) {
@@ -112,7 +189,7 @@ public class ClientHandler implements Runnable {
             currentGameId = gameId;
 
             log.info("Game created: {}", gameId.getId());
-            send(ServerMessage.ok("Game created: " + gameId.getId()));
+            send(ServerMessage.ok("Game created: " + gameId.getId()).toProtocolString());
         } catch (Exception e) {
             sendError("CREATE_FAILED", e.getMessage());
         }
@@ -141,7 +218,7 @@ public class ClientHandler implements Runnable {
 
             log.info("Player {} joined game {}", playerName, gameId.getId());
 
-            send(ServerMessage.welcome(gameId.getId(), newPlayerId.getId()));
+            send(ServerMessage.welcome(gameId.getId(), newPlayerId.getId()).toProtocolString());
 
             // Broadcast lobby update
             broadcastLobby(game);
@@ -150,7 +227,7 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private void handleLeave(Message.ParsedMessage msg) {
+    private void handleLeave() {
         if (currentGameId == null || playerId == null) {
             sendError("NOT_IN_GAME", "Not in a game");
             return;
@@ -162,7 +239,7 @@ public class ClientHandler implements Runnable {
 
             gameClients.get(currentGameId).remove(this);
 
-            send(ServerMessage.ok("Left game"));
+            send(ServerMessage.ok("Left game").toProtocolString());
             broadcastLobby(game);
 
             currentGameId = null;
@@ -172,7 +249,7 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private void handleStart(Message.ParsedMessage msg) {
+    private void handleStart() {
         if (currentGameId == null) {
             sendError("NOT_IN_GAME", "Not in a game");
             return;
@@ -188,7 +265,7 @@ public class ClientHandler implements Runnable {
                 game.getDealerId().getId(),
                 config.getAnte(),
                 config.getFixedBet()
-            ));
+            ).toProtocolString());
 
             // Collect ante
             game.collectAnte();
@@ -197,7 +274,7 @@ public class ClientHandler implements Runnable {
                     currentGameId.getId(),
                     player.getId().getId(),
                     player.getChips()
-                ));
+                ).toProtocolString());
             }
 
             // Deal cards
@@ -211,20 +288,20 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private void handleCheck(Message.ParsedMessage msg) {
+    private void handleCheck() {
         handleGameAction(game -> {
             game.check(playerId);
             broadcast(currentGameId, ServerMessage.action(
-                currentGameId.getId(), playerId.getId(), "CHECK", ""));
+                currentGameId.getId(), playerId.getId(), "CHECK", "").toProtocolString());
             advanceGame(game);
         });
     }
 
-    private void handleCall(Message.ParsedMessage msg) {
+    private void handleCall() {
         handleGameAction(game -> {
             game.call(playerId);
             broadcast(currentGameId, ServerMessage.action(
-                currentGameId.getId(), playerId.getId(), "CALL", ""));
+                currentGameId.getId(), playerId.getId(), "CALL", "").toProtocolString());
             advanceGame(game);
         });
     }
@@ -234,16 +311,16 @@ public class ClientHandler implements Runnable {
             int amount = Integer.parseInt(msg.getParams().get("AMOUNT"));
             game.raise(playerId, amount);
             broadcast(currentGameId, ServerMessage.action(
-                currentGameId.getId(), playerId.getId(), "BET", String.valueOf(amount)));
+                currentGameId.getId(), playerId.getId(), "BET", String.valueOf(amount)).toProtocolString());
             advanceGame(game);
         });
     }
 
-    private void handleFold(Message.ParsedMessage msg) {
+    private void handleFold() {
         handleGameAction(game -> {
             game.fold(playerId);
             broadcast(currentGameId, ServerMessage.action(
-                currentGameId.getId(), playerId.getId(), "FOLD", ""));
+                currentGameId.getId(), playerId.getId(), "FOLD", "").toProtocolString());
             advanceGame(game);
         });
     }
@@ -260,7 +337,7 @@ public class ClientHandler implements Runnable {
                 playerId.getId(),
                 indices.size(),
                 "*"
-            ));
+            ).toProtocolString());
             
             // Send new cards only to the player
             String cardStr = newCards.stream()
@@ -271,33 +348,20 @@ public class ClientHandler implements Runnable {
                 playerId.getId(),
                 indices.size(),
                 cardStr
-            ));
+            ).toProtocolString());
             
             advanceGame(game);
         });
     }
 
-    private void handleStatus(Message.ParsedMessage msg) {
-        if (currentGameId == null) {
-            sendError("NOT_IN_GAME", "Not in a game");
-            return;
+    private List<Integer> parseCardIndices(String cardsStr) {
+        if (cardsStr == null || cardsStr.isEmpty() || cardsStr.equalsIgnoreCase("none")) {
+            return List.of();
         }
-
-        try {
-            PokerGame game = gameManager.getGame(currentGameId);
-            send(ServerMessage.round(
-                currentGameId.getId(),
-                game.getPot(),
-                game.getCurrentBet()
-            ));
-        } catch (Exception e) {
-            sendError("STATUS_FAILED", e.getMessage());
-        }
-    }
-
-    private void handleQuit(Message.ParsedMessage msg) {
-        send(ServerMessage.ok("Goodbye"));
-        running = false;
+        return Arrays.stream(cardsStr.split(","))
+            .map(String::trim)
+            .map(Integer::parseInt)
+            .toList();
     }
 
     private void handleGameAction(GameAction action) {
@@ -334,7 +398,7 @@ public class ClientHandler implements Runnable {
                     entry.getKey().getId(),
                     handStr,
                     entry.getValue().toProtocolString()
-                ));
+                ).toProtocolString());
             }
 
             // Distribute pot
@@ -348,17 +412,17 @@ public class ClientHandler implements Runnable {
                     payout.playerId().getId(),
                     payout.amount(),
                     winningRank.toProtocolString()
-                ));
+                ).toProtocolString());
                 
                 broadcast(currentGameId, ServerMessage.payout(
                     currentGameId.getId(),
                     payout.playerId().getId(),
                     payout.amount(),
                     payout.newStack()
-                ));
+                ).toProtocolString());
             }
 
-            broadcast(currentGameId, ServerMessage.end(currentGameId.getId(), "Normal"));
+            broadcast(currentGameId, ServerMessage.end(currentGameId.getId(), "Normal").toProtocolString());
         } else if (state == GameState.DRAW || state == GameState.BET1 || state == GameState.BET2) {
             notifyTurn(game);
         }
@@ -372,7 +436,7 @@ public class ClientHandler implements Runnable {
                     currentGameId.getId(),
                     player.getId().getId(),
                     "*,*,*,*,*"
-                ));
+                ).toProtocolString());
 
                 // Send actual cards to the player
                 String cardStr = player.getHand().stream()
@@ -383,7 +447,7 @@ public class ClientHandler implements Runnable {
                     currentGameId.getId(),
                     player.getId().getId(),
                     cardStr
-                ));
+                ).toProtocolString());
             }
         }
     }
@@ -399,56 +463,19 @@ public class ClientHandler implements Runnable {
                 currentPlayer.getId(),
                 game.getState().name(),
                 callAmount,
-                game.getConfig().getFixedBet()
-            ));
+                player.getChips()
+            ).toProtocolString());
         }
     }
 
     private void broadcastLobby(PokerGame game) {
-        String playerList = game.getAllPlayers().stream()
+        String playerNames = game.getAllPlayers().stream()
             .map(Player::getName)
             .collect(Collectors.joining(","));
-
-        broadcast(currentGameId, ServerMessage.lobby(
-            currentGameId.getId(),
-            playerList
-        ));
+        broadcast(currentGameId, ServerMessage.lobby(currentGameId.getId(), playerNames).toProtocolString());
     }
 
-    private List<Integer> parseCardIndices(String cardsStr) {
-        if (cardsStr == null || cardsStr.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        return Arrays.stream(cardsStr.split(","))
-            .map(String::trim)
-            .map(Integer::parseInt)
-            .collect(Collectors.toList());
-    }
-
-    private void send(ServerMessage message) {
-        if (writer != null) {
-            String msg = message.toProtocolString();
-            log.debug("Sending to {}: {}", playerId != null ? playerId.getId() : "unknown", msg);
-            writer.println(msg);
-        }
-    }
-
-    private void sendError(String code, String reason) {
-        send(ServerMessage.error(code, reason));
-    }
-
-    private void sendError(Exception e) {
-        if (e instanceof InvalidMoveException ime) {
-            sendError(ime.getCode(), ime.getMessage());
-        } else if (e instanceof ProtocolException pe) {
-            sendError(pe.getCode(), pe.getMessage());
-        } else {
-            sendError("ERROR", e.getMessage());
-        }
-    }
-
-    private void broadcast(GameId gameId, ServerMessage message) {
+    private void broadcast(GameId gameId, String message) {
         Set<ClientHandler> clients = gameClients.get(gameId);
         if (clients != null) {
             for (ClientHandler client : clients) {
@@ -457,50 +484,43 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private void sendToPlayer(GameId gameId, PlayerId targetPlayerId, ServerMessage message) {
+    private void sendToPlayer(GameId gameId, PlayerId targetPlayerId, String message) {
         Set<ClientHandler> clients = gameClients.get(gameId);
         if (clients != null) {
-            for (ClientHandler client : clients) {
-                if (targetPlayerId.equals(client.playerId)) {
-                    client.send(message);
+            for (ClientHandler handler : clients) {
+                if (targetPlayerId.equals(handler.playerId)) {
+                    handler.send(message);
                     break;
                 }
             }
         }
     }
 
-    private void cleanup() {
-        running = false;
-
-        if (currentGameId != null && playerId != null) {
-            try {
-                PokerGame game = gameManager.getGame(currentGameId);
-                if (game != null && game.getState() == GameState.LOBBY) {
-                    game.removePlayer(playerId);
-                }
-                
-                Set<ClientHandler> clients = gameClients.get(currentGameId);
-                if (clients != null) {
-                    clients.remove(this);
-                }
-            } catch (Exception e) {
-                log.error("Error during cleanup", e);
-            }
-        }
-
-        try {
-            if (reader != null) reader.close();
-            if (writer != null) writer.close();
-            if (socket != null && !socket.isClosed()) socket.close();
-        } catch (IOException e) {
-            log.error("Error closing connection", e);
-        }
-
-        log.info("Client disconnected");
-    }
-
     @FunctionalInterface
     private interface GameAction {
         void execute(PokerGame game) throws Exception;
+    }
+
+    public void close() {
+        try {
+            if (currentGameId != null && playerId != null) {
+                try {
+                    PokerGame game = gameManager.getGame(currentGameId);
+                    game.removePlayer(playerId);
+                    
+                    Set<ClientHandler> clients = gameClients.get(currentGameId);
+                    if (clients != null) {
+                        clients.remove(this);
+                    }
+                } catch (Exception e) {
+                    log.error("Error removing player on disconnect", e);
+                }
+            }
+            
+            channel.close();
+            log.info("Client disconnected");
+        } catch (IOException e) {
+            log.error("Error closing channel", e);
+        }
     }
 }
