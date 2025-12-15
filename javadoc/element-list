@@ -1,0 +1,7 @@
+poker.client
+poker.common.cards
+poker.model.exceptions
+poker.model.game
+poker.model.players
+poker.model.protocol
+poker.server

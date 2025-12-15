@@ -245,11 +245,7 @@ public class PokerGame {
         advanceTurn();
     }
 
-    /**if (state != GameState.BET1 && state != GameState.BET2) {
-            throw new StateMismatchException("BET1 or BET2", state.name());
-        }
-        
-        
+    /**
      * Player folds.
      */
     public synchronized void fold(PlayerId playerId) {
