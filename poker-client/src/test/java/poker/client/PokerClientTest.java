@@ -798,4 +798,1084 @@ class PokerClientTest {
         assertNotNull(mainMethod);
         assertEquals(void.class, mainMethod.getReturnType());
     }
+
+    @Test
+    void testHandleUserInputCreate() throws Exception {
+        // Start accepting connections
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+            } catch (IOException e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        Thread.sleep(100);
+        
+        // Read HELLO message
+        serverReader.readLine();
+        
+        // Use reflection to call handleUserInput
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        method.invoke(client, "create 10 20");
+        
+        // Should receive CREATE message
+        String received = serverReader.readLine();
+        assertNotNull(received);
+        assertTrue(received.contains("CREATE"));
+    }
+
+    @Test
+    void testHandleUserInputJoin() throws Exception {
+        // Start accepting connections
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+            } catch (IOException e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        Thread.sleep(100);
+        
+        // Read HELLO message
+        serverReader.readLine();
+        
+        // Use reflection to call handleUserInput
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        method.invoke(client, "join GAME123 Alice");
+        
+        // Should receive JOIN message
+        String received = serverReader.readLine();
+        assertNotNull(received);
+        assertTrue(received.contains("JOIN"));
+    }
+
+    @Test
+    void testHandleUserInputInvalidCommands() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        // Test invalid create (missing arguments)
+        assertDoesNotThrow(() -> method.invoke(client, "create"));
+        assertDoesNotThrow(() -> method.invoke(client, "create 10"));
+        
+        // Test invalid join (missing arguments)
+        assertDoesNotThrow(() -> method.invoke(client, "join"));
+        assertDoesNotThrow(() -> method.invoke(client, "join GAME123"));
+        
+        // Test invalid draw (missing arguments)
+        assertDoesNotThrow(() -> method.invoke(client, "draw"));
+        
+        // Test invalid bet (missing arguments)
+        assertDoesNotThrow(() -> method.invoke(client, "bet"));
+    }
+
+    @Test
+    void testHandleServerMessageAnteOk() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test ANTE_OK for own player
+        String message = "ANTE_OK PLAYER=\"PLAYER456\" STACK=\"990\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+        
+        // Test ANTE_OK for other player (should not print)
+        String message2 = "ANTE_OK PLAYER=\"OTHER\" STACK=\"990\"";
+        assertDoesNotThrow(() -> method.invoke(client, message2));
+    }
+
+    @Test
+    void testHandleServerMessageDealHiddenCards() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test DEAL with hidden cards
+        String message = "DEAL PLAYER=\"PLAYER456\" CARDS=\"*,*,*,*,*\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+        
+        // Test DEAL for another player
+        String message2 = "DEAL PLAYER=\"OTHER\" CARDS=\"AS,KH,QD,JC,10S\"";
+        assertDoesNotThrow(() -> method.invoke(client, message2));
+    }
+
+    @Test
+    void testHandleServerMessageTurnCheckScenario() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID and current hand
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        String dealMsg = "DEAL PLAYER=\"PLAYER456\" CARDS=\"AS,KH,QD,JC,10S\"";
+        method.invoke(client, dealMsg);
+        
+        // Test TURN with CALL=0 (check scenario)
+        String message = "TURN PLAYER=\"PLAYER456\" PHASE=\"BET1\" CALL=\"0\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkWithoutCards() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test DRAW_OK without new cards (kept all)
+        String message = "DRAW_OK PLAYER=\"PLAYER456\" NEW=\"\" COUNT=\"0\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+        
+        // Test DRAW_OK with asterisk
+        String message2 = "DRAW_OK PLAYER=\"PLAYER456\" NEW=\"*\" COUNT=\"0\"";
+        assertDoesNotThrow(() -> method.invoke(client, message2));
+    }
+
+    @Test
+    void testHandleServerMessageDrawokAlternative() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test DRAWOK (alternative format)
+        String message = "DRAWOK PLAYER=\"PLAYER456\" NEW=\"2H,3D\" COUNT=\"2\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageOkWelcome() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Test OK with welcome message
+        String message = "OK MESSAGE=\"Welcome to Poker Server\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageOkOther() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Test OK with other message
+        String message = "OK MESSAGE=\"Player joined\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageShowdownOpponent() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test SHOWDOWN for opponent
+        String message = "SHOWDOWN PLAYER=\"OTHER\" HAND=\"AS,KS,QS,JS,10S\" RANK=\"ROYAL_FLUSH\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageWinnerOpponent() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test WINNER for opponent
+        String message = "WINNER PLAYER=\"OTHER\" POT=\"200\" RANK=\"FULL_HOUSE\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessagePayoutOtherPlayer() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test PAYOUT for other player (should not print)
+        String message = "PAYOUT PLAYER=\"OTHER\" STACK=\"1000\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleUserInputExit() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        // Test exit command
+        assertDoesNotThrow(() -> method.invoke(client, "exit"));
+    }
+
+    @Test
+    void testHandleUserInputDrawWithIndices() throws Exception {
+        // Start accepting connections
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+            } catch (IOException e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        Thread.sleep(100);
+        
+        // Read HELLO message
+        serverReader.readLine();
+        
+        // Set game and player ID using reflection
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        // Use reflection to call handleUserInput
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        method.invoke(client, "draw 0,2,4");
+        
+        // Should receive DRAW message
+        String received = serverReader.readLine();
+        assertNotNull(received);
+        assertTrue(received.contains("DRAW"));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkWithIndices() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        // Set up game state using reflection
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var currentHandField = PokerClient.class.getDeclaredField("currentHand");
+        currentHandField.setAccessible(true);
+        currentHandField.set(client, "AS,KH,QD,JC,10S");
+        
+        var lastDrawIndicesField = PokerClient.class.getDeclaredField("lastDrawIndices");
+        lastDrawIndicesField.setAccessible(true);
+        lastDrawIndicesField.set(client, java.util.Arrays.asList(0, 2, 4));
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Test DRAW_OK with actual card replacement
+        String message = "DRAW_OK PLAYER=\"PLAYER456\" NEW=\"2H,3D,4C\" COUNT=\"3\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testSendWithConnectedClient() throws Exception {
+        // Start accepting connections
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+            } catch (IOException e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        Thread.sleep(100);
+        
+        // Read HELLO message
+        serverReader.readLine();
+        
+        // Send multiple messages
+        var method = PokerClient.class.getDeclaredMethod("send", ClientMessage.class);
+        method.setAccessible(true);
+        
+        method.invoke(client, ClientMessage.create(10, 20));
+        method.invoke(client, ClientMessage.join("GAME123", "Alice"));
+        
+        // Verify messages were sent
+        String msg1 = serverReader.readLine();
+        String msg2 = serverReader.readLine();
+        assertNotNull(msg1);
+        assertNotNull(msg2);
+        assertTrue(msg1.contains("CREATE"));
+        assertTrue(msg2.contains("JOIN"));
+    }
+
+    @Test
+    void testRunNotConnected() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        // Try to run without connecting - should print error and return
+        assertDoesNotThrow(() -> client.run());
+    }
+
+    @Test
+    void testHandleUserInputBetWithGameState() throws Exception {
+        // Start accepting connections
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+            } catch (IOException e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        Thread.sleep(100);
+        
+        // Read HELLO message
+        serverReader.readLine();
+        
+        // Set game and player ID
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        // Test various game commands with game state
+        method.invoke(client, "check");
+        method.invoke(client, "call");
+        method.invoke(client, "fold");
+        method.invoke(client, "status");
+        method.invoke(client, "start");
+        
+        // Verify messages were sent
+        for (int i = 0; i < 5; i++) {
+            String received = serverReader.readLine();
+            assertNotNull(received);
+        }
+    }
+
+    @Test
+    void testHandleUserInputLeaveWithGameState() throws Exception {
+        // Start accepting connections
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+            } catch (IOException e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        Thread.sleep(100);
+        
+        // Read HELLO message
+        serverReader.readLine();
+        
+        // Set game and player ID
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        method.invoke(client, "leave");
+        
+        // Verify LEAVE message was sent
+        String received = serverReader.readLine();
+        assertNotNull(received);
+        assertTrue(received.contains("LEAVE"));
+        
+        // Verify game and player ID were cleared
+        assertNull(gameIdField.get(client));
+        assertNull(playerIdField.get(client));
+    }
+
+    @Test
+    void testHandleUserInputQuitWithGameState() throws Exception {
+        // Start accepting connections
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+            } catch (IOException e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        Thread.sleep(100);
+        
+        // Read HELLO message
+        serverReader.readLine();
+        
+        // Set game and player ID
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        method.invoke(client, "quit");
+        
+        // Verify QUIT message was sent
+        String received = serverReader.readLine();
+        assertNotNull(received);
+        assertTrue(received.contains("QUIT"));
+    }
+
+    @Test
+    void testHandleUserInputHandWithCurrentHand() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        // Set current hand
+        var currentHandField = PokerClient.class.getDeclaredField("currentHand");
+        currentHandField.setAccessible(true);
+        currentHandField.set(client, "AS,KH,QD,JC,10S");
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "hand"));
+    }
+
+    @Test
+    void testHandleServerMessageTurnForOtherPlayer() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test TURN for another player (should not print details)
+        String message = "TURN PLAYER=\"OTHER\" PHASE=\"DRAW\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageTurnBet1Phase() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID and current hand
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        String dealMsg = "DEAL PLAYER=\"PLAYER456\" CARDS=\"AS,KH,QD,JC,10S\"";
+        method.invoke(client, dealMsg);
+        
+        // Test TURN for BET1 phase with call amount > 0
+        String message = "TURN PLAYER=\"PLAYER456\" PHASE=\"BET1\" CALL=\"50\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageTurnBet2Phase() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID and current hand
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        String dealMsg = "DEAL PLAYER=\"PLAYER456\" CARDS=\"AS,KH,QD,JC,10S\"";
+        method.invoke(client, dealMsg);
+        
+        // Test TURN for BET2 phase
+        String message = "TURN PLAYER=\"PLAYER456\" PHASE=\"BET2\" CALL=\"100\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testIntegrationFullGameFlow() throws Exception {
+        // Start mock server
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+                
+                // Read HELLO
+                serverReader.readLine();
+                
+                // Simulate game flow
+                serverWriter.println("OK MESSAGE=\"Welcome to Poker Server\"");
+                Thread.sleep(50);
+                serverWriter.println("OK MESSAGE=\"Game created: GAME123\"");
+                Thread.sleep(50);
+                serverWriter.println("WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"");
+                Thread.sleep(50);
+                serverWriter.println("LOBBY PLAYERS=\"Alice,Bob\"");
+                Thread.sleep(50);
+                serverWriter.println("STARTED ANTE=\"10\" BET=\"20\"");
+                Thread.sleep(50);
+                serverWriter.println("ANTE_OK PLAYER=\"PLAYER456\" STACK=\"990\"");
+                Thread.sleep(50);
+                serverWriter.println("DEAL PLAYER=\"PLAYER456\" CARDS=\"AS,KH,QD,JC,10S\"");
+                Thread.sleep(50);
+                serverWriter.println("TURN PLAYER=\"PLAYER456\" PHASE=\"BET1\" CALL=\"0\"");
+                Thread.sleep(50);
+                serverWriter.println("ACTION PLAYER=\"OTHER\" TYPE=\"CHECK\" ARGS=\"\"");
+                Thread.sleep(50);
+                serverWriter.println("TURN PLAYER=\"PLAYER456\" PHASE=\"DRAW\"");
+                Thread.sleep(50);
+                serverWriter.println("DRAW_OK PLAYER=\"PLAYER456\" NEW=\"2H,3D\" COUNT=\"2\"");
+                Thread.sleep(50);
+                serverWriter.println("TURN PLAYER=\"PLAYER456\" PHASE=\"BET2\" CALL=\"20\"");
+                Thread.sleep(50);
+                serverWriter.println("ROUND POT=\"100\"");
+                Thread.sleep(50);
+                serverWriter.println("SHOWDOWN PLAYER=\"PLAYER456\" HAND=\"AS,KH,QD,2H,3D\" RANK=\"PAIR\"");
+                Thread.sleep(50);
+                serverWriter.println("WINNER PLAYER=\"PLAYER456\" POT=\"100\" RANK=\"PAIR\"");
+                Thread.sleep(50);
+                serverWriter.println("PAYOUT PLAYER=\"PLAYER456\" STACK=\"1090\"");
+                Thread.sleep(50);
+                serverWriter.println("END");
+            } catch (Exception e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        
+        // Give time for messages to be processed
+        Thread.sleep(1000);
+        
+        // Verify connection was established
+        assertNotNull(serverSideSocket);
+    }
+
+    @Test
+    void testHandleUserInputNumberFormatException() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        // Test invalid number format for create
+        assertThrows(Exception.class, () -> method.invoke(client, "create abc def"));
+        
+        // Test invalid number format for bet
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        assertThrows(Exception.class, () -> method.invoke(client, "bet xyz"));
+    }
+
+    @Test
+    void testHandleUserInputDrawInvalidIndices() throws Exception {
+        // Start accepting connections
+        final ServerSocket finalMockServer = mockServer;
+        serverThread = new Thread(() -> {
+            try {
+                serverSideSocket = finalMockServer.accept();
+                serverReader = new BufferedReader(
+                    new InputStreamReader(serverSideSocket.getInputStream(), StandardCharsets.UTF_8));
+                serverWriter = new PrintWriter(
+                    new OutputStreamWriter(serverSideSocket.getOutputStream(), StandardCharsets.UTF_8), true);
+            } catch (IOException e) {
+                // Expected
+            }
+        });
+        serverThread.start();
+        
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        client.connect();
+        Thread.sleep(100);
+        
+        // Read HELLO message
+        serverReader.readLine();
+        
+        // Set game and player ID
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        // Test draw with invalid indices
+        assertThrows(Exception.class, () -> method.invoke(client, "draw a,b,c"));
+    }
+
+    @Test
+    void testHandleServerMessageOkGameCreatedExtraction() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Test OK with game created and proper ID extraction
+        String message = "OK MESSAGE=\"Game created: TEST-GAME-ID-123\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkWithLessNewCards() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        // Set up game state
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var currentHandField = PokerClient.class.getDeclaredField("currentHand");
+        currentHandField.setAccessible(true);
+        currentHandField.set(client, "AS,KH,QD,JC,10S");
+        
+        var lastDrawIndicesField = PokerClient.class.getDeclaredField("lastDrawIndices");
+        lastDrawIndicesField.setAccessible(true);
+        // Set indices but receive fewer cards
+        lastDrawIndicesField.set(client, java.util.Arrays.asList(0, 2, 4));
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Test DRAW_OK with only one new card
+        String message = "DRAW_OK PLAYER=\"PLAYER456\" NEW=\"2H\" COUNT=\"1\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkWithIndexOutOfBounds() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        // Set up game state
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var currentHandField = PokerClient.class.getDeclaredField("currentHand");
+        currentHandField.setAccessible(true);
+        currentHandField.set(client, "AS,KH,QD,JC,10S");
+        
+        var lastDrawIndicesField = PokerClient.class.getDeclaredField("lastDrawIndices");
+        lastDrawIndicesField.setAccessible(true);
+        // Set invalid index
+        lastDrawIndicesField.set(client, java.util.Arrays.asList(10));
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Should not throw even with invalid index
+        String message = "DRAW_OK PLAYER=\"PLAYER456\" NEW=\"2H\" COUNT=\"1\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkForOtherPlayer() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test DRAW_OK for another player (should not process)
+        String message = "DRAW_OK PLAYER=\"OTHER\" NEW=\"2H,3D\" COUNT=\"2\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageActionWithNullArgs() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test ACTION without ARGS parameter (null)
+        String message = "ACTION PLAYER=\"OTHER\" TYPE=\"CHECK\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageActionWithBetAndNoArgs() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test ACTION BET without ARGS
+        String message = "ACTION PLAYER=\"OTHER\" TYPE=\"BET\" ARGS=\"\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageUnknownAction() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test ACTION with unknown type
+        String message = "ACTION PLAYER=\"OTHER\" TYPE=\"UNKNOWN_ACTION\" ARGS=\"\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageOkWithoutMessage() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Test OK without MESSAGE parameter
+        String message = "OK";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageErrWithoutReason() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Test ERR without REASON parameter
+        String message = "ERR";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageWelcomeWithoutGameOrPlayer() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Test WELCOME without parameters
+        String message = "WELCOME";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkWithoutNewOrCount() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test DRAW_OK without NEW and COUNT parameters
+        String message = "DRAW_OK PLAYER=\"PLAYER456\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkWithNullLastDrawIndices() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        // Set up game state without lastDrawIndices
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var currentHandField = PokerClient.class.getDeclaredField("currentHand");
+        currentHandField.setAccessible(true);
+        currentHandField.set(client, "AS,KH,QD,JC,10S");
+        
+        // lastDrawIndices is null by default
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Should handle null lastDrawIndices gracefully
+        String message = "DRAW_OK PLAYER=\"PLAYER456\" NEW=\"2H,3D\" COUNT=\"2\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkWithEmptyLastDrawIndices() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        // Set up game state with empty lastDrawIndices
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var currentHandField = PokerClient.class.getDeclaredField("currentHand");
+        currentHandField.setAccessible(true);
+        currentHandField.set(client, "AS,KH,QD,JC,10S");
+        
+        var lastDrawIndicesField = PokerClient.class.getDeclaredField("lastDrawIndices");
+        lastDrawIndicesField.setAccessible(true);
+        lastDrawIndicesField.set(client, java.util.Collections.emptyList());
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Should handle empty lastDrawIndices gracefully
+        String message = "DRAW_OK PLAYER=\"PLAYER456\" NEW=\"2H,3D\" COUNT=\"2\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDrawOkWithNullCurrentHand() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        // Set up game state without currentHand
+        var gameIdField = PokerClient.class.getDeclaredField("gameId");
+        gameIdField.setAccessible(true);
+        gameIdField.set(client, "GAME123");
+        
+        var playerIdField = PokerClient.class.getDeclaredField("playerId");
+        playerIdField.setAccessible(true);
+        playerIdField.set(client, "PLAYER456");
+        
+        var lastDrawIndicesField = PokerClient.class.getDeclaredField("lastDrawIndices");
+        lastDrawIndicesField.setAccessible(true);
+        lastDrawIndicesField.set(client, java.util.Arrays.asList(0, 2));
+        
+        // currentHand is null by default
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Should handle null currentHand gracefully
+        String message = "DRAW_OK PLAYER=\"PLAYER456\" NEW=\"2H,3D\" COUNT=\"2\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testConnectAndDisconnectMultipleTimes() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            // Find available port
+            ServerSocket tempServer = new ServerSocket(0); // Let OS assign free port
+            int port = tempServer.getLocalPort();
+            
+            Thread tempThread = new Thread(() -> {
+                try {
+                    Socket tempSocket = tempServer.accept();
+                    BufferedReader tempReader = new BufferedReader(
+                        new InputStreamReader(tempSocket.getInputStream(), StandardCharsets.UTF_8));
+                    tempReader.readLine(); // Read HELLO
+                    tempSocket.close();
+                } catch (IOException e) {
+                    // Expected
+                }
+            });
+            tempThread.start();
+            
+            PokerClient client = new PokerClient(TEST_HOST, port);
+            client.connect();
+            Thread.sleep(100);
+            
+            var method = PokerClient.class.getDeclaredMethod("disconnect");
+            method.setAccessible(true);
+            method.invoke(client);
+            
+            tempThread.join(100);
+            tempServer.close();
+            Thread.sleep(50); // Give OS time to release port
+        }
+    }
+
+    @Test
+    void testDisconnectWithNullReaderAndWriter() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("disconnect");
+        method.setAccessible(true);
+        
+        // Disconnect without connecting (null reader/writer)
+        assertDoesNotThrow(() -> method.invoke(client));
+    }
+
+    @Test
+    void testHandleServerMessageAnteOkWithoutStack() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test ANTE_OK without STACK
+        String message = "ANTE_OK PLAYER=\"PLAYER456\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageTurnWithoutCallAmount() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        // Test TURN without CALL parameter
+        String message = "TURN PLAYER=\"PLAYER456\" PHASE=\"BET1\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
 }
