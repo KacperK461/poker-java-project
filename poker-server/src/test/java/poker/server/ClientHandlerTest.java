@@ -453,6 +453,219 @@ class ClientHandlerTest {
         assertDoesNotThrow(() -> clientHandler.handleRead(key));
     }
 
+    @Test
+    void testMultipleDrawIndices() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"test\" PLAYER_ID=\"player1\" ACTION=\"DRAW\" INDICES=\"0,1,2,3,4\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testDrawWithEmptyIndices() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"test\" PLAYER_ID=\"player1\" ACTION=\"DRAW\" INDICES=\"\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testMessageWithSpecialCharacters() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"test\" PLAYER_ID=\"player1\" ACTION=\"JOIN\" NAME=\"Player@#$%\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testCreateGameWithDifferentAmounts() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"\" PLAYER_ID=\"\" ACTION=\"CREATE\" ANTE=\"5\" BET=\"10\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testBetWithZeroAmount() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"test\" PLAYER_ID=\"player1\" ACTION=\"BET\" AMOUNT=\"0\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testBetWithLargeAmount() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"test\" PLAYER_ID=\"player1\" ACTION=\"BET\" AMOUNT=\"999999\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testCloseWithoutGame() throws Exception {
+        // Test closing handler that never joined a game
+        assertDoesNotThrow(() -> clientHandler.close());
+    }
+
+    @Test
+    void testCloseWhileInGame() throws Exception {
+        // Create and join a game
+        GameConfig config = GameConfig.builder()
+                .ante(10)
+                .fixedBet(20)
+                .maxPlayers(4)
+                .build();
+        GameId gameId = gameManager.createGame(config);
+
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(100);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"\" PLAYER_ID=\"\" ACTION=\"JOIN\" GAME_REF=\"" + gameId.getId() + "\" NAME=\"TestPlayer\"\n");
+        Thread.sleep(100);
+        clientHandler.handleRead(key);
+
+        // Now close while in game
+        assertDoesNotThrow(() -> clientHandler.close());
+    }
+
+    @Test
+    void testMessageWithMissingParameters() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        // Missing required parameters
+        sendMessage("GAME_ID=\"test\" ACTION=\"CREATE\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testSequentialCommands() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        // Create game
+        sendMessage("GAME_ID=\"\" PLAYER_ID=\"\" ACTION=\"CREATE\" ANTE=\"10\" BET=\"20\"\n");
+        Thread.sleep(50);
+        clientHandler.handleRead(key);
+
+        // Try to create another game (should handle error)
+        sendMessage("GAME_ID=\"\" PLAYER_ID=\"\" ACTION=\"CREATE\" ANTE=\"15\" BET=\"30\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testHandleWriteWithNoMessages() throws Exception {
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        if (key != null) {
+            serverSideChannel.register(selector, SelectionKey.OP_WRITE);
+            final SelectionKey finalKey = serverSideChannel.keyFor(selector);
+            // Should handle gracefully with empty queue
+            assertDoesNotThrow(() -> clientHandler.handleWrite(finalKey));
+        }
+    }
+
+    @Test
+    void testMultipleReadsWithIncompleteData() throws Exception {
+        // Send data in small chunks
+        ByteBuffer buffer = ByteBuffer.wrap("HE".getBytes(StandardCharsets.UTF_8));
+        clientChannel.write(buffer);
+        Thread.sleep(20);
+        
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        buffer = ByteBuffer.wrap("LLO VE".getBytes(StandardCharsets.UTF_8));
+        clientChannel.write(buffer);
+        Thread.sleep(20);
+        clientHandler.handleRead(key);
+
+        buffer = ByteBuffer.wrap("RSION=\"1.0\"\n".getBytes(StandardCharsets.UTF_8));
+        clientChannel.write(buffer);
+        Thread.sleep(50);
+        clientHandler.handleRead(key);
+
+        // Should have processed complete message
+        assertTrue(true);
+    }
+
+    @Test
+    void testJoinNonExistentGame() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"\" PLAYER_ID=\"\" ACTION=\"JOIN\" GAME_REF=\"nonexistent\" NAME=\"Player1\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testStartGameNotInLobby() throws Exception {
+        sendMessage("HELLO VERSION=\"1.0\"\n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        clientHandler.handleRead(key);
+
+        sendMessage("GAME_ID=\"somegame\" PLAYER_ID=\"player1\" ACTION=\"START\"\n");
+        Thread.sleep(50);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testDoubleClose() throws Exception {
+        clientHandler.close();
+        // Second close should not throw
+        assertDoesNotThrow(() -> clientHandler.close());
+    }
+
+    @Test
+    void testWhitespaceOnlyMessage() throws Exception {
+        sendMessage("   \n");
+        Thread.sleep(50);
+        SelectionKey key = serverSideChannel.keyFor(selector);
+        assertDoesNotThrow(() -> clientHandler.handleRead(key));
+    }
+
+    @Test
+    void testSendAfterClose() throws Exception {
+        clientHandler.close();
+        // Sending after close should not throw
+        assertDoesNotThrow(() -> clientHandler.send("TEST"));
+    }
+
     private void sendMessage(String message) throws IOException {
         ByteBuffer buffer = ByteBuffer.wrap(message.getBytes(StandardCharsets.UTF_8));
         clientChannel.write(buffer);

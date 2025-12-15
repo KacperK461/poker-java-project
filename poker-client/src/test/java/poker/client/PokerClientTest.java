@@ -12,6 +12,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
 
 /**
  * Test class for PokerClient.
@@ -521,5 +523,279 @@ class PokerClientTest {
         
         // Unknown command should not throw
         assertDoesNotThrow(() -> method.invoke(client, "unknown"));
+    }
+
+    @Test
+    void testHandleUserInputStart() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "start"));
+    }
+
+    @Test
+    void testHandleUserInputCheck() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "check"));
+    }
+
+    @Test
+    void testHandleUserInputCall() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "call"));
+    }
+
+    @Test
+    void testHandleUserInputBet() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "bet 50"));
+    }
+
+    @Test
+    void testHandleUserInputFold() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "fold"));
+    }
+
+    @Test
+    void testHandleUserInputDraw() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "draw 0,2,4"));
+    }
+
+    @Test
+    void testHandleUserInputDrawNone() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "draw none"));
+    }
+
+    @Test
+    void testHandleUserInputStatus() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "status"));
+    }
+
+    @Test
+    void testHandleUserInputLeave() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "leave"));
+    }
+
+    @Test
+    void testHandleUserInputQuit() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "quit"));
+    }
+
+    @Test
+    void testHandleServerMessageBET() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID first
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        String message = "ACTION PLAYER=\"OTHER\" TYPE=\"BET\" ARGS=\"100\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageCALL() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        String message = "ACTION PLAYER=\"OTHER\" TYPE=\"CALL\" ARGS=\"\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageRAISE() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        String message = "ACTION PLAYER=\"OTHER\" TYPE=\"RAISE\" ARGS=\"150\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testHandleServerMessageDRAW() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        String welcomeMsg = "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"";
+        method.invoke(client, welcomeMsg);
+        
+        String message = "ACTION PLAYER=\"OTHER\" TYPE=\"DRAW\" ARGS=\"3\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testFormatHandNiceWithPartialHand() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("formatHandNice", String.class);
+        method.setAccessible(true);
+        
+        String result = (String) method.invoke(client, "AS,KH,QD");
+        assertTrue(result.contains("[0:AS]"));
+        assertTrue(result.contains("[1:KH]"));
+        assertTrue(result.contains("[2:QD]"));
+    }
+
+    @Test
+    void testFormatHandNiceWithSingleCard() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("formatHandNice", String.class);
+        method.setAccessible(true);
+        
+        String result = (String) method.invoke(client, "AS");
+        assertTrue(result.contains("[0:AS]"));
+    }
+
+    @Test
+    void testFormatCardsWithEmptyString() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("formatCards", String.class);
+        method.setAccessible(true);
+        
+        String result = (String) method.invoke(client, "");
+        assertEquals("Hidden", result);
+    }
+
+    @Test
+    void testFormatCardsWithSingleCard() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("formatCards", String.class);
+        method.setAccessible(true);
+        
+        String result = (String) method.invoke(client, "AS");
+        assertEquals("AS", result);
+    }
+
+    @Test
+    void testHandleServerMessageMultipleTypes() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID
+        method.invoke(client, "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"");
+        
+        // Test multiple message types
+        assertDoesNotThrow(() -> method.invoke(client, "STARTED ANTE=\"10\" BET=\"20\""));
+        assertDoesNotThrow(() -> method.invoke(client, "DEAL PLAYER=\"PLAYER456\" CARDS=\"AS,KH,QD,JC,10S\""));
+        assertDoesNotThrow(() -> method.invoke(client, "TURN PLAYER=\"PLAYER456\" PHASE=\"BET1\" CALL=\"20\""));
+        assertDoesNotThrow(() -> method.invoke(client, "ROUND POT=\"100\""));
+        assertDoesNotThrow(() -> method.invoke(client, "SHOWDOWN PLAYER=\"PLAYER456\" HAND=\"AS,KS,QS,JS,10S\" RANK=\"ROYAL_FLUSH\""));
+        assertDoesNotThrow(() -> method.invoke(client, "WINNER PLAYER=\"PLAYER456\" POT=\"200\" RANK=\"FULL_HOUSE\""));
+        assertDoesNotThrow(() -> method.invoke(client, "PAYOUT PLAYER=\"PLAYER456\" STACK=\"1000\""));
+    }
+
+    @Test
+    void testConnectToInvalidPort() {
+        PokerClient client = new PokerClient(TEST_HOST, 1); // Port 1 unlikely to have server
+        assertThrows(IOException.class, client::connect);
+    }
+
+    @Test
+    void testHandleUserInputWithExtraSpaces() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "  create   10   20  "));
+    }
+
+    @Test
+    void testHandleUserInputCaseInsensitivity() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleUserInput", String.class);
+        method.setAccessible(true);
+        
+        assertDoesNotThrow(() -> method.invoke(client, "HELP"));
+        assertDoesNotThrow(() -> method.invoke(client, "Help"));
+        assertDoesNotThrow(() -> method.invoke(client, "hElP"));
+    }
+
+    @Test
+    void testHandleServerMessageWithOwnAction() throws Exception {
+        PokerClient client = new PokerClient(TEST_HOST, TEST_PORT);
+        
+        var method = PokerClient.class.getDeclaredMethod("handleServerMessage", String.class);
+        method.setAccessible(true);
+        
+        // Set player ID
+        method.invoke(client, "WELCOME GAME=\"GAME123\" PLAYER=\"PLAYER456\"");
+        
+        // Action from self (should still not throw)
+        String message = "ACTION PLAYER=\"PLAYER456\" TYPE=\"BET\" ARGS=\"50\"";
+        assertDoesNotThrow(() -> method.invoke(client, message));
+    }
+
+    @Test
+    void testMainMethodExists() throws Exception {
+        // Verify main method signature
+        var mainMethod = PokerClient.class.getMethod("main", String[].class);
+        assertNotNull(mainMethod);
+        assertEquals(void.class, mainMethod.getReturnType());
     }
 }
